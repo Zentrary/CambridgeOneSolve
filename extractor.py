@@ -434,9 +434,7 @@ def t(key, **kwargs):
     return s
 
 async def console_input(prompt, reader=None):
-    # Keep Playwright's event loop running while the user works in the browser.
     return await asyncio.to_thread(reader or input, prompt)
-
 
 @asynccontextmanager
 async def report_progress(stage_key, interval=3):
@@ -456,10 +454,8 @@ async def report_progress(stage_key, interval=3):
         with suppress(asyncio.CancelledError):
             await task
 
-
 def normalized_name(value):
     return sigma_normalizetext(value or '').casefold()
-
 
 def cache_matches_exercise(entry, exercise, unit_name):
     """Legacy caches may contain answers saved under a substring-matched name."""
@@ -480,18 +476,15 @@ def cache_matches_exercise(entry, exercise, unit_name):
         return False
     return True
 
-
 def exercise_identity(exercise):
     """Stable across scrolls/re-renders; never use a transient DOM marker as an ID."""
     return (normalized_name(exercise['name']), exercise.get('href') or '', exercise.get('activity_id') or '')
-
 
 def catalog_signature(data):
     return tuple(sorted(
         (normalized_name(lesson['name']), exercise_identity(exercise))
         for lesson in data.get('lessons', []) for exercise in lesson['exercises']
     ))
-
 
 def merge_exercise_catalogs(previous, current):
     """Union snapshots without losing lessons that a virtual scroller unmounted."""
@@ -510,8 +503,6 @@ def merge_exercise_catalogs(previous, current):
                     target.append(dict(exercise))
                 else:
                     target[index] = dict(exercise)
-    # Cambridge lessons are lettered; discovery may start at D after returning
-    # from an exercise. Do not let the initial viewport determine menu numbering.
     result['lessons'] = sorted(lessons.values(), key=lambda lesson: normalized_name(lesson['name']))
     headers = list(dict.fromkeys(
         name for snapshot in (previous or {}, current)
@@ -523,7 +514,6 @@ def merge_exercise_catalogs(previous, current):
         if not lessons.get(normalized_name(name), {}).get('exercises')
     ]
     return result
-
 
 def UI_TEXT():
     return f"""
@@ -558,8 +548,6 @@ class SkibidiLogger:
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
         try:
-            # Fast restarts used to overwrite a previous session in the same
-            # second. Use a unique timestamp AND exclusive creation.
             suffix = 0
             while True:
                 try:
@@ -641,7 +629,6 @@ class PomlikeheeyaDB:
     def get(self, course, unit, exercise, lesson=None):
         entry = self.data.get(self.skibidikey(course, unit, exercise, lesson))
         if entry is None and lesson:
-            # Retain legacy entries for manual viewing, but never trust them silently.
             entry = self.data.get(self.skibidikey(course, unit, exercise))
         return entry
 
@@ -886,7 +873,6 @@ def gyatt_getcontext(contentblock, interaction):
 
         return sigma_normalizetext(context_text(paragraph))[:300]
     return ''
-
 
 def ohio_parsedropdown(root, interactions, instruction, audio_filename):
     questions = []
@@ -1191,9 +1177,6 @@ def pom_showdatabase(db):
     except Exception:
         pass
 
-# Discovery deliberately reads textContent, not visibility or viewport layout.
-# Cambridge can hide/offload earlier lessons while the user is at Lesson D.
-# Visibility is checked only when choosing an element to interact with.
 WORKBOOK_DOM_HELPERS = r'''
     const norm = value => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const textOf = el => el ? (el.textContent || '').trim() : '';
@@ -1359,8 +1342,6 @@ EXERCISES_DOM_SCRIPT = '(unitName) => {' + WORKBOOK_DOM_HELPERS + r'''
     return result;
 }'''
 
-# Walk the selected unit (not the whole course), including a scrollable workbook
-# panel or virtual-list viewport. The extent is recalculated as lazy content grows.
 UNIT_SCROLL_SCRIPT = '(options) => {' + WORKBOOK_DOM_HELPERS + r'''
     if (options.action === 'restore') {
         const root = document.querySelector('[data-cambridge-extractor-scroll-root="selected"]');
@@ -1425,7 +1406,6 @@ VERIFY_ACTIVITY_SCRIPT = r'''expected => {
     }
     return state;
 }'''
-
 
 class CambridgeOneScraper:
     WINDOW_POSITION = "0,0"
@@ -1611,7 +1591,6 @@ class CambridgeOneScraper:
                 print(f"  {Fore.CYAN}{t('datajs_waiting', received=len(self.data_js_contents), total=len(self.data_js_urls), seconds=now - started)}{Style.RESET_ALL}", flush=True)
                 last_report = now
             await asyncio.sleep(min(0.2, self.PROGRESS_INTERVAL, max(0, timeout - (time.monotonic() - started))))
-        # A captured URL can still be retried asynchronously with the browser's cookies.
         return bool(self.data_js_urls)
 
     async def check_login_status(self):
@@ -1864,7 +1843,6 @@ class CambridgeOneScraper:
         ))
 
     async def _evaluate_read(self, script, arg=None):
-        # Retry only idempotent DOM reads, never arbitrary clicks/toggles.
         for attempt in range(3):
             try:
                 return await self.page.evaluate(script, arg)
@@ -1969,8 +1947,6 @@ class CambridgeOneScraper:
                     pass_data = {'unit_name': unit_name, 'lessons': [], 'discovery': {}}
                     async for snapshot in self._scan_unit_snapshots(unit_name, deadline):
                         pass_data = merge_exercise_catalogs(pass_data, snapshot)
-                    # Union positions WITHIN a pass, but compare fresh whole
-                    # passes so transient loading rows cannot live forever.
                     data = pass_data if self._last_scan_reached_end else merge_exercise_catalogs(data, pass_data)
                     signature = catalog_signature(data)
                     if announce and signature != last_signature:
@@ -1989,8 +1965,6 @@ class CambridgeOneScraper:
                         break
                     await asyncio.sleep(0.3)
         finally:
-            # Leave the browser at the START of the selected unit, not at D or
-            # in the next unit. This also wakes the first virtualized lesson.
             with suppress(PlaywrightError):
                 await self._evaluate_read(UNIT_SCROLL_SCRIPT, {'unit': unit_name, 'action': 'begin'})
         missing_previous = set(catalog_signature(previous or {})) - set(catalog_signature(data))
@@ -2000,8 +1974,6 @@ class CambridgeOneScraper:
             complete=complete, stable_passes=stable_passes,
             previous_entries_not_seen=len(missing_previous),
         )
-        # Never replace a known complete catalog with a partial scan, or
-        # promote a transient/timeout snapshot into a trusted baseline.
         if complete:
             self._exercise_catalogs[key] = data
         self.current_unit = unit_name
@@ -2100,9 +2072,6 @@ class CambridgeOneScraper:
                 if await target.is_visible():
                     await target.click(timeout=10000)
                 else:
-                    # A real, exact catalog row can be CSS-hidden (e.g. a
-                    # responsive/previous lesson). Activate that row, not a
-                    # substring-matched parent. Never activate a disabled row.
                     activated = await target.evaluate(r'''(el, expected) => {
                         const norm = value => (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
                         if (norm(el.textContent) !== norm(expected) || el.closest('[disabled], [aria-disabled="true"], [inert]')) return false;
@@ -2167,7 +2136,6 @@ class CambridgeOneScraper:
             if not content:
                 print(f"  {Fore.CYAN}{t('datajs_downloading', n=index, total=len(urls))}{Style.RESET_ALL}", flush=True)
                 try:
-                    # Use the authenticated browser context, not a blocking requests.get.
                     async with report_progress('stage_download'):
                         response = await self.context.request.get(url, timeout=30000)
                         try:
@@ -2214,7 +2182,6 @@ class CambridgeOneScraper:
             with suppress(PlaywrightError):
                 await self.playwright.stop()
         self.context = self.browser = self.page = self.playwright = None
-
 
 def display_courses(courses):
     print(f"\n  {'=' * 70}")
@@ -2352,7 +2319,7 @@ async def show_answers_flow(scraper, db):
 
             login_success = await scraper.login(email, password)
             if login_success:
-                scraper.save_account(email)  # Remember the account, not an unrequested password.
+                scraper.save_account(email)
 
         if not login_success:
             print(f"  {Fore.RED}{t('login_failed')}{Style.RESET_ALL}")
@@ -2472,7 +2439,6 @@ async def show_selected_exercise(scraper, db, selected_course, selected_unit, se
         else:
             print(f"  {Fore.YELLOW}{t('cached_unverified')}{Style.RESET_ALL}")
 
-    # Cached answers still open the exact selected activity in the browser.
     if not await scraper.click_exercise(
         exercise_name, unit_name=selected_unit['name'], lesson_name=lesson_name, href=selected_ex.get('href'),
     ):
@@ -2508,10 +2474,8 @@ async def show_selected_exercise(scraper, db, selected_course, selected_unit, se
             exercise=exercise_name, lesson=lesson_name, source=dict(scraper.verified_exercise),
         )
 
-
 async def run_exercise_selection(scraper, db, selected_course, selected_unit):
     while True:
-        # Also handles a browser that the user navigated manually while at a prompt.
         if not await scraper.return_to_workbook(selected_unit['name']):
             return
         exercises_data = await scraper.get_exercises_in_unit(selected_unit['name'])
@@ -2548,7 +2512,6 @@ async def run_exercise_selection(scraper, db, selected_course, selected_unit):
         except (EOFError, KeyboardInterrupt):
             stop = True
         except Exception as error:
-            # A failed activity should not discard the entire logged-in session.
             print(f"\n  {Fore.RED}{t('error_prefix', msg=error)}{Style.RESET_ALL}")
             traceback.print_exc()
         finally:
@@ -2560,7 +2523,6 @@ async def run_exercise_selection(scraper, db, selected_course, selected_unit):
             restored = await scraper.return_to_workbook(selected_unit['name'])
         if stop or not restored:
             return
-
 
 def change_language_menu():
     while True:
